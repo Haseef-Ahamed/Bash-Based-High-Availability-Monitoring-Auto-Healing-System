@@ -1,12 +1,9 @@
 #!/bin/bash
 #------------------------------------------
-# Script header & globals
+# Service Guardian - High Availability Monitoring System
+# Monitors: Nginx, MySQL, Redis
 #------------------------------------------
-                # CONF_FILE="./services.conf"
-                # HEALTH_LOG="./service_health.log"
-                # INCIDENT_LOG="./incidents.txt"
 
-                # touch "$(dirname "$HEALTH_LOG")" "$(dirname "$INCIDENT_LOG")"
 # Get absolute path of script directory
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -32,15 +29,15 @@ log_health() {
     echo "$(date '+%F %T') | $1" >> "$HEALTH_LOG"
 }
 
-
 log_incident() {
     echo "$(date '+%F %T') | $1" >> "$INCIDENT_LOG"
 }
 
 #------------------------------------------
-# Service health check function
+# Service health check functions
 #------------------------------------------
 log_health "Service Guardian started"
+
 check_systemctl() {
     systemctl is-active --quiet "$1"
 }
@@ -54,7 +51,7 @@ check_response() {
 }
 
 #------------------------------------------
-#Smart restart (exponential backoff)
+# Smart restart (exponential backoff)
 #------------------------------------------
 restart_service() {
     local service=$1
@@ -101,7 +98,7 @@ monitor_logs() {
     local service=$1
     local logfile=$2
 
-    tail -Fn0 "$logfile" | while read line; do
+    tail -Fn0 "$logfile" 2>/dev/null | while read line; do
         if echo "$line" | grep -Ei "error|fail|panic|critical"; then
             log_incident "$service log error: $line"
         fi
@@ -130,8 +127,8 @@ monitor_service() {
         return
     fi
 
-    if check_systemctl "$SERVICE_NAME" &&
-       check_port "$PORT" &&
+    if check_systemctl "$SERVICE_NAME" && \
+       check_port "$PORT" && \
        check_response "$CHECK_CMD"; then
 
         log_health "$SERVICE_NAME healthy"
@@ -169,3 +166,108 @@ run_guardian() {
     done
 }
 
+#------------------------------------------
+# Start log monitoring for all services
+#------------------------------------------
+start_log_monitors() {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+
+        if [[ "$line" =~ ^SERVICE_NAME=(.+)$ ]]; then
+            current_service="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^LOG_FILE=(.+)$ ]]; then
+            current_logfile="${BASH_REMATCH[1]}"
+            if [[ -n "$current_service" && -n "$current_logfile" && -f "$current_logfile" ]]; then
+                monitor_logs "$current_service" "$current_logfile"
+                log_health "Started log monitor for $current_service ($current_logfile)"
+            fi
+        fi
+    done < "$CONF_FILE"
+}
+
+#------------------------------------------
+# Calculate and display availability stats
+#------------------------------------------
+show_availability() {
+    local total_runtime=$(($(date +%s) - START_TIME))
+    
+    echo ""
+    echo "========================================="
+    echo "  SERVICE AVAILABILITY REPORT"
+    echo "========================================="
+    echo "Total Runtime: $((total_runtime / 60)) minutes"
+    echo ""
+    
+    for service in "${!SERVICE_UPTIME[@]}"; do
+        local uptime=${SERVICE_UPTIME[$service]:-0}
+        local downtime=${SERVICE_DOWNTIME[$service]:-0}
+        local total=$((uptime + downtime))
+        
+        if (( total > 0 )); then
+            local availability=$(awk "BEGIN {printf \"%.2f\", ($uptime / $total) * 100}")
+            echo "[$service]"
+            echo "  Uptime: ${uptime}s | Downtime: ${downtime}s"
+            echo "  Availability: ${availability}%"
+            echo ""
+        fi
+    done
+    
+    log_health "Availability report generated"
+}
+
+#------------------------------------------
+# Graceful shutdown handler
+#------------------------------------------
+cleanup() {
+    echo ""
+    log_health "Service Guardian shutting down..."
+    show_availability
+    
+    # Kill all background log monitoring processes
+    jobs -p | xargs -r kill 2>/dev/null
+    
+    log_health "Service Guardian stopped"
+    exit 0
+}
+
+#------------------------------------------
+# Periodic availability reporting (background)
+#------------------------------------------
+periodic_report() {
+    while true; do
+        sleep 300  # Report every 5 minutes
+        show_availability >> "$HEALTH_LOG"
+    done
+}
+
+#------------------------------------------
+# Main execution
+#------------------------------------------
+trap cleanup SIGINT SIGTERM
+
+echo "========================================="
+echo "  SERVICE GUARDIAN STARTED"
+echo "========================================="
+echo "Monitoring: Nginx, MySQL, Redis"
+echo "Check Interval: ${CHECK_INTERVAL}s"
+echo "Logs: $HEALTH_LOG | $INCIDENT_LOG"
+echo "========================================="
+echo ""
+
+# Initialize uptime counters for all services
+while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^SERVICE_NAME=(.+)$ ]]; then
+        service_name="${BASH_REMATCH[1]}"
+        SERVICE_UPTIME[$service_name]=0
+        SERVICE_DOWNTIME[$service_name]=0
+    fi
+done < "$CONF_FILE"
+
+# Start log monitors for all services
+start_log_monitors
+
+# Start periodic availability reporting in background
+periodic_report &
+
+# Run the main guardian loop
+run_guardian
