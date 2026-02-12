@@ -1,0 +1,11 @@
+2026-02-12 10:47:05 | mysql unhealthy
+2026-02-12 10:47:07 | mysql restart failed, retry 1 in 2s
+2026-02-12 10:47:12 | mysql restart failed, retry 2 in 4s
+2026-02-12 10:47:18 | mysql restart failed, retry 3 in 8s
+2026-02-12 10:47:28 | mysql restart failed, retry 4 in 16s
+2026-02-12 10:47:44 | mysql FAILED after 4 retries
+2026-02-12 10:47:49 | mysql unhealthy
+2026-02-12 10:47:52 | mysql restart failed, retry 1 in 2s
+2026-02-12 10:47:56 | mysql restart failed, retry 2 in 4s
+2026-02-12 10:48:02 | mysql restart failed, retry 3 in 8s
+2026-02-12 10:48:12 | mysql restart failed, retry 4 in 16s
